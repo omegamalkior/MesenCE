@@ -6,6 +6,9 @@ on:
       - 'megaman-widescreen'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   windows-libretro:
     runs-on: windows-latest
@@ -37,3 +40,14 @@ jobs:
         with:
           name: mesen2_libretro-megaman-widescreen-windows-x64
           path: mesen2_libretro.dll
+
+      - name: Publish core to the megaman-widescreen-build branch
+        shell: bash
+        run: |
+          mkdir published && cp mesen2_libretro.dll published/ && cd published
+          git init -q -b megaman-widescreen-build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mesen2_libretro.dll
+          git commit -q -m "Windows libretro core built from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" megaman-widescreen-build
