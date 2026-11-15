@@ -1289,6 +1289,36 @@ void libretro_probe_inputs(const char* tag)
 		if(w <= 0 || h <= 0) return 0;
 		return (int)((long long)w * 1000 / h);
 	}
+#elif defined(__APPLE__)
+	}
+	#include <dlfcn.h>
+	#include <TargetConditionals.h>
+	extern "C" {
+	// iPhone / iPad: ask UIScreen for the panel size through the Objective-C runtime (looked up at
+	// run time so the core needs no extra link dependencies). Assumes landscape play.
+	static int mw_screen_aspect(bool ownOnly)
+	{
+		(void)ownOnly;
+#if TARGET_OS_IOS
+		struct MwCGRect { double x, y, w, h; };
+		static void* getClass = dlsym(RTLD_DEFAULT, "objc_getClass");
+		static void* selReg = dlsym(RTLD_DEFAULT, "sel_registerName");
+		static void* msgSend = dlsym(RTLD_DEFAULT, "objc_msgSend");
+		if(!getClass || !selReg || !msgSend) return 0;
+		void* cls = ((void* (*)(const char*))getClass)("UIScreen");
+		if(!cls) return 0;
+		void* selMain = ((void* (*)(const char*))selReg)("mainScreen");
+		void* selBounds = ((void* (*)(const char*))selReg)("nativeBounds");
+		void* screen = ((void* (*)(void*, void*))msgSend)(cls, selMain);
+		if(!screen) return 0;
+		MwCGRect r = ((MwCGRect (*)(void*, void*))msgSend)(screen, selBounds);
+		double a = r.w > r.h ? r.w : r.h, b = r.w > r.h ? r.h : r.w;
+		if(b < 1) return 0;
+		return (int)(a * 1000.0 / b);
+#else
+		return 0;
+#endif
+	}
 #else
 	static int mw_screen_aspect(bool ownOnly)
 	{

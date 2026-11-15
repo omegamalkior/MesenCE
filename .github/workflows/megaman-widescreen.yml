@@ -73,6 +73,41 @@ jobs:
           name: mesen_libretro_ios-megaman-widescreen
           path: mesen2_libretro_ios.dylib
 
+      - name: Put the core into the RetroArch nightly IPA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          curl -L --fail -o RetroArch.ipa https://buildbot.libretro.com/nightly/apple/ios-arm64/RetroArch.ipa
+          mkdir ipa && cd ipa && unzip -q ../RetroArch.ipa
+          APP=$(ls -d Payload/*.app | head -1)
+          echo "App: $APP"
+          ls "$APP/Frameworks" | grep -i -E "mesen|nestopia|fceumm" || true
+          FW="$APP/Frameworks/mesen.libretro.framework"
+          if [ -d "$FW" ]; then
+            echo "Replacing the stock Mesen core"
+            cat "$FW/Info.plist" || true
+          else
+            echo "No stock Mesen core in this IPA; adding ours"
+            mkdir -p "$FW"
+            REF=$(ls -d "$APP"/Frameworks/*.libretro.framework | head -1)
+            cp "$REF/Info.plist" "$FW/Info.plist"
+            REFNAME=$(basename "$REF" .framework)
+            plutil -convert xml1 "$FW/Info.plist"
+            sed -i '' "s/$REFNAME/mesen.libretro/g" "$FW/Info.plist"
+          fi
+          rm -rf "$FW/_CodeSignature"
+          cp ../mesen2_libretro_ios.dylib "$FW/mesen.libretro"
+          chmod 755 "$FW/mesen.libretro"
+          codesign --force --sign - "$FW"
+          ls -la "$FW"
+          zip -qry ../RetroArch-MegaMan-Widescreen.ipa Payload
+          cd .. && ls -la RetroArch-MegaMan-Widescreen.ipa
+          gh release delete megaman-widescreen-ios -R "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create megaman-widescreen-ios RetroArch-MegaMan-Widescreen.ipa mesen2_libretro_ios.dylib -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+            --title "RetroArch iOS nightly + Mesen with Mega Man widescreen" \
+            --notes "RetroArch iOS nightly IPA with its Mesen core replaced by the build from this branch (Mega Man 1 widescreen). Not signed for distribution: install it with a sideloading tool (AltStore, SideStore, Sideloadly...), which signs it for your device."
+
       - name: Publish core to the megaman-widescreen-build-ios branch
         run: |
           mkdir published && cp mesen2_libretro_ios.dylib published/mesen_libretro_ios.dylib && cd published
