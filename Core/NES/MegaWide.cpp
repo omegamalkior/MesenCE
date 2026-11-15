@@ -26,6 +26,7 @@ namespace {
 	// sprite extension state
 	uint8_t _oxBuf[64];           // written by the sprite intercepts (high byte of X, 0x40 = HUD)
 	bool _oxFresh = false;
+	bool _oxSticky = false;       // READY text is on screen (its sprites are not redrawn every frame)
 	uint8_t _oxPending[64];
 	bool _dmaHappened = false;
 	uint8_t _ox[64];
@@ -77,6 +78,7 @@ namespace {
 		{7,0xD91E,3,0x13,{0x4c,0xb3,0xc3}},
 		{7,0xDB3C,13,0x11,{0x18,0xa5,0x1a,0x65,0x00,0x85,0x00,0xa5,0x1b,0x69,0x00,0x85,0x05}},
 		{7,0xD13E,3,0x14,{0x20,0x78,0xd4}},
+		{5,0xBF9C,15,0x15,{0x8d,0x04,0x02,0x8d,0x08,0x02,0x8d,0x0c,0x02,0x8d,0x10,0x02,0x8d,0x14,0x02}},
 	};
 	constexpr int PatchCount = sizeof(_patches) / sizeof(_patches[0]);
 	// engine signature: the block-drawing routine that defines the level format
@@ -303,7 +305,7 @@ namespace {
 			if(row < 0 || row >= h) continue;
 			int sx = _oam[n * 4 + 3];
 			bool extra = _ox[n] != 0;   // hidden from the normal PPU, drawn here in full
-			if(_ox[n] == 0x40) sx += (_frameLevel ? L.hudC : M) - D; else sx += 256 * (int8_t)_ox[n];
+			if(_ox[n] == 0x40) sx += (_frameLevel ? L.hudC : M) - D; else if(_ox[n] == 0x41) sx += M - D; else sx += 256 * (int8_t)_ox[n];
 			if(!extra && sx <= 248) continue;   // entirely inside the window: the PPU draws it
 			if(at & 0x80) row = h - 1 - row;
 			uint16_t pa;
@@ -359,7 +361,7 @@ void MegaWide::OnLoad(NesConsole* console)
 	_supported = false; _hooksOk = false;
 	L = Lv();
 	memset(_oxBuf, 0, sizeof(_oxBuf)); memset(_ox, 0, sizeof(_ox)); memset(_oxPending, 0, sizeof(_oxPending));
-	_oxFresh = false; _dmaHappened = false; _frameUsed = false;
+	_oxFresh = false; _oxSticky = false; _dmaHappened = false; _frameUsed = false;
 	if(_prg && _ram && size >= 0x20000 && (size & (size - 1)) == 0 && (size % 0x4000) == 0) {
 		_bankMask = size / 0x4000 - 1;
 		uint8_t* fixed = _prg + ((size_t)_bankMask << 14);
@@ -400,7 +402,7 @@ int MegaWide::GetWidth() { return _supported ? CurW() : 256; }
 void MegaWide::OnOamDma(uint8_t page)
 {
 	if(!_supported) return;
-	if(HookAt && page == 2 && _oxFresh) memcpy(_oxPending, _oxBuf, 64); else memset(_oxPending, 0, 64);
+	if(HookAt && page == 2 && (_oxFresh || _oxSticky)) memcpy(_oxPending, _oxBuf, 64); else memset(_oxPending, 0, 64);
 	_oxFresh = false;
 	_dmaHappened = true;
 }
@@ -462,7 +464,13 @@ bool MegaWide::Hook(NesCpu* cpu)
 		}
 		case 0x12: if(!(_ram[0x8D] & 1)) next = 0xD89A; else if(_margin) next = 0xD8BF; break;
 		case 0x13: next = _margin ? 0xD921 : 0xC3B3; break;
-		case 0x14: memset(_oxBuf, 0, 64); _oxFresh = true; return false;   // then run the original instruction
+		case 0x14: memset(_oxBuf, 0, 64); _oxFresh = true; _oxSticky = false; return false;   // then run the original instruction
+		// READY text (sprites 1-5, blinked by rewriting Y): mark them to be centred on the wide view
+		case 0x15:
+			if(!_oxSticky) memset(_oxBuf, 0, 64);
+			for(int k = 1; k <= 5; k++) { _ram[0x200 + 4 * k] = s.A; _oxBuf[k] = _margin ? 0x41 : 0; }
+			_oxSticky = true;
+			break;
 		default: return false;
 	}
 	s.PC = next;
