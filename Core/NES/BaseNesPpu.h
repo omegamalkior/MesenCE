@@ -15,6 +15,7 @@ class EmuSettings;
 class BaseNesPpu : public INesMemoryHandler, public ISerializable
 {
 protected:
+	friend struct MegaWide;
 	uint64_t _masterClock = 0;
 	uint32_t _cycle = 0;
 	int16_t _scanline = 0;

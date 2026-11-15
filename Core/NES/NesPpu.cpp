@@ -3,6 +3,7 @@
 #include "Utilities/Serializer.h"
 
 #include "NES/NesPpu.h"
+#include "NES/MegaWide.h"
 #include "NES/NesCpu.h"
 #include "NES/APU/NesApu.h"
 #include "NES/NesMemoryManager.h"
@@ -1438,6 +1439,8 @@ template<class T> void NesPpu<T>::ProcessScanlineFirstCycle()
 
 		UpdateMinimumDrawCycles();
 	}
+
+	MegaWide::OnScanline(this);
 
 	UpdateApuStatus();
 

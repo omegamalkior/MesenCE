@@ -1,6 +1,6 @@
 name: Run tests
 
-on: [push, pull_request]
+on: [workflow_dispatch]  # disabled on the megaman-widescreen branch; the libretro core is built by megaman-widescreen.yml
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: 1

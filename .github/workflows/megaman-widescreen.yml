@@ -1,0 +1,39 @@
+name: Build libretro core (Windows, Mega Man widescreen)
+
+on:
+  push:
+    branches:
+      - 'megaman-widescreen'
+  workflow_dispatch:
+
+jobs:
+  windows-libretro:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (MinGW-w64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            make
+            mingw-w64-x86_64-gcc
+
+      - name: Build mesen2_libretro.dll
+        run: |
+          g++ --version
+          make -f Makefile.libretro -j4 HAVE_LTO=0
+          ls -la mesen2_libretro.dll
+          objdump -p mesen2_libretro.dll | grep "DLL Name" || true
+
+      - name: Upload core
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesen2_libretro-megaman-widescreen-windows-x64
+          path: mesen2_libretro.dll

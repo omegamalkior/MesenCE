@@ -17,6 +17,7 @@ struct MapperStateEntry;
 
 class BaseMapper : public INesMemoryHandler, public ISerializable
 {
+	friend struct MegaWide;
 private:
 	unique_ptr<Epsm> _epsm;
 

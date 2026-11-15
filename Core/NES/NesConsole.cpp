@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "NES/MegaWide.h"
 #include "NES/NesConsole.h"
 #include "NES/NesControlManager.h"
 #include "NES/MapperFactory.h"
@@ -44,6 +45,7 @@ NesConsole::NesConsole(Emulator* emu)
 
 NesConsole::~NesConsole()
 {
+	MegaWide::OnUnload(this);
 	shared_ptr<HdPackData> hdData = _hdData.lock();
 	if(hdData) {
 		hdData->CancelLoad();
@@ -228,6 +230,9 @@ LoadRomResult NesConsole::LoadRom(VirtualFile& romFile)
 		_controlManager->Reset(false);
 		_cpu->Reset(false, _region);
 		_mapper->OnAfterResetPowerOn();
+		if(!_vsMainConsole) {
+			MegaWide::OnLoad(this);
+		}
 	}
 	return result;
 }

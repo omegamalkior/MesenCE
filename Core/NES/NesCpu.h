@@ -909,6 +909,7 @@ public:
 	MemoryOperationInfo GetOperationInfo(uint32_t index);
 	#else
 	friend DummyNesCpu;
+	friend struct MegaWide;
 	#endif
 };
 

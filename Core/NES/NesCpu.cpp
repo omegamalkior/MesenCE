@@ -4,6 +4,7 @@
 #include "Utilities/Serializer.h"
 #include "Debugger/Debugger.h"
 #include "NES/NesCpu.h"
+#include "NES/MegaWide.h"
 #include "NES/NesPpu.h"
 #include "NES/APU/NesApu.h"
 #include "NES/NesMemoryManager.h"
@@ -170,6 +171,9 @@ void NesCpu::Reset(bool softReset, ConsoleRegion region)
 void NesCpu::Exec()
 {
 #ifndef DUMMYCPU
+	if(MegaWide::HookAt && MegaWide::HookAt[_state.PC] && MegaWide::Hook(this)) {
+		return;
+	}
 	_emu->ProcessInstruction<CpuType::Nes>();
 #endif
 
@@ -512,6 +516,9 @@ void NesCpu::RunDMATransfer(uint8_t offsetValue)
 {
 	_spriteDmaTransfer = true;
 	_spriteDmaOffset = offsetValue;
+#ifndef DUMMYCPU
+	MegaWide::OnOamDma(offsetValue);
+#endif
 	_needHalt = true;
 }
 

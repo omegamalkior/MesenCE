@@ -26,6 +26,8 @@
 #include "../Core/Shared/BaseControlManager.h"
 
 #include "../Core/NES/NesConsole.h"
+#include "../Core/NES/MegaWide.h"
+#include "../Core/NES/NesDefaultVideoFilter.h"
 #include "../Core/SNES/SnesConsole.h"
 #include "../Core/Gameboy/Gameboy.h"
 #include "../Core/GBA/GbaConsole.h"
@@ -354,6 +356,10 @@ static std::unique_ptr<LibretroAudioDevice> _audioDevice;
 static constexpr const char* MesenNtscFilter = "mesen_ntsc_filter";
 static constexpr const char* MesenPalette = "mesen_palette";
 static constexpr const char* MesenSpriteLimit = "mesen_sprite_limit";
+static constexpr const char* MesenMwAspect = "mesen_megaman_wide_aspect";
+static constexpr const char* MesenMwPixels = "mesen_megaman_wide_pixels";
+static constexpr const char* MesenMwFill = "mesen_megaman_wide_fill";
+static constexpr const char* MesenMwEnemies = "mesen_megaman_wide_enemies";
 static constexpr const char* MesenEnablePalBorders = "mesen_enable_pal_borders";
 static constexpr const char* MesenSpritesEnabled = "mesen_sprites_enabled";
 static constexpr const char* MesenBackgroundEnabled = "mesen_background_enabled";
@@ -985,6 +991,18 @@ uint32_t wavebeamPalette[0x40] { 0xFF6B6B6B, 0xFF001B88, 0xFF21009A, 0xFF40008C,
 			{ MesenSpriteLimit, "Enhancements - Sprite Limit", "Sprite Limit", "8-sprite scanline limit", NULL, "enhancements",
 				{{ "normal", "Normal" }, { "adaptive", "Adaptive" }, { "off", "Off" }, { NULL, NULL }},
 				"normal" },
+			{ MesenMwAspect, "Enhancements - Mega Man 1 Widescreen", "Mega Man 1 Widescreen", "Real widescreen for Mega Man 1 (and hacks using its engine): extra level is drawn left and right instead of stretching. Auto follows the display.", NULL, "enhancements",
+				{{ "auto", "Auto (match my screen)" }, { "16:9", "16:9" }, { "21:9 (2560x1080)", "21:9 (2560x1080)" }, { "21:9 (3440x1440)", "21:9 (3440x1440)" }, { "32:9", "32:9" }, { "16:10", "16:10" }, { "off", "Off (4:3)" }, { NULL, NULL }},
+				"auto" },
+			{ MesenMwPixels, "Enhancements - Mega Man 1 Widescreen: Pixel Shape", "Widescreen Pixel Shape", "Square pixels are sharpest and show more of the level; TV-like keeps the original 8:7 proportions.", NULL, "enhancements",
+				{{ "square", "Square" }, { "tv", "TV-like (8:7)" }, { NULL, NULL }},
+				"square" },
+			{ MesenMwFill, "Enhancements - Mega Man 1 Widescreen: Outside The Level", "Widescreen Outside The Level", "What to show beside rooms that are narrower than the screen.", NULL, "enhancements",
+				{{ "dimmed", "Dimmed extension" }, { "black", "Black" }, { "full", "Full extension" }, { NULL, NULL }},
+				"dimmed" },
+			{ MesenMwEnemies, "Enhancements - Mega Man 1 Widescreen: Enemies In The Wide Area", "Widescreen Enemies", "Lets enemies and shots exist in the wide area. Off keeps the original game logic.", NULL, "enhancements",
+				{{ "enabled", "On" }, { "disabled", "Off" }, { NULL, NULL }},
+				"enabled" },
 
 			{ NULL, NULL, NULL, NULL, NULL, NULL, {{ NULL, NULL }}, NULL }
 		};
@@ -1237,8 +1255,120 @@ void libretro_probe_inputs(const char* tag)
 		}
 	}
 
+	// ---- Mega Man 1 widescreen -------------------------------------------------------------
+	static int _mwAspectMode = 0;      // 0 auto, 1..5 fixed, 6 off
+	static bool _mwSquare = true;
+	static int _mwFill = 1;
+	static bool _mwEnemies = true;
+	static int _mwAutoAspect = 0;      // screen width*1000/height
+	static uint32_t _mwLastWidth = 0;
+	static float _mwLastAspect = 0;
+
+#if defined(_WIN32)
+	extern "C" {
+		struct MwRect { int left, top, right, bottom; };
+		struct MwMonitorInfo { unsigned cbSize; MwRect rcMonitor; MwRect rcWork; unsigned dwFlags; };
+		__declspec(dllimport) void* __stdcall GetForegroundWindow(void);
+		__declspec(dllimport) void* __stdcall GetActiveWindow(void);
+		__declspec(dllimport) void* __stdcall MonitorFromWindow(void* hwnd, unsigned flags);
+		__declspec(dllimport) int __stdcall GetMonitorInfoW(void* mon, MwMonitorInfo* mi);
+	}
+	// ownOnly: only answer while the frontend's own window is the active one
+	static int mw_screen_aspect(bool ownOnly)
+	{
+		void* win = GetActiveWindow();
+		if(!win) {
+			if(ownOnly) return 0;
+			win = GetForegroundWindow();
+		}
+		MwMonitorInfo mi = {};
+		mi.cbSize = sizeof(mi);
+		void* mon = MonitorFromWindow(win, 1);
+		if(!mon || !GetMonitorInfoW(mon, &mi)) return 0;
+		int w = mi.rcMonitor.right - mi.rcMonitor.left, h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+		if(w <= 0 || h <= 0) return 0;
+		return (int)((long long)w * 1000 / h);
+	}
+#else
+	static int mw_screen_aspect(bool ownOnly)
+	{
+		(void)ownOnly;
+		const char* v = getenv("MESEN_MW_SCREEN");   // for testing
+		return v ? atoi(v) : 0;
+	}
+#endif
+
+	static void mw_apply()
+	{
+		static const int aspects[7] = { 0, 1778, 2370, 2389, 3556, 1600, 0 };
+		int margin = 0;
+		if(_mwAspectMode != 6) {
+			int asp = aspects[_mwAspectMode];
+			if(_mwAspectMode == 0) {
+				if(!_mwAutoAspect) _mwAutoAspect = mw_screen_aspect(false);
+				asp = _mwAutoAspect ? _mwAutoAspect : 1778;
+				if(asp < 1340) asp = 0;
+			}
+			int wpx = (asp * 240 * (_mwSquare ? 8 : 7) + 40) / 8000;
+			margin = (wpx - 256) / 2;
+		}
+		MegaWide::SetOptions(margin, _mwFill, _mwEnemies);
+	}
+
+	static void mw_read_options()
+	{
+		struct retro_variable var = { };
+		if(readVariable(MesenMwAspect, var)) {
+			string v = var.value;
+			_mwAspectMode = v == "16:9" ? 1 : v == "21:9 (2560x1080)" ? 2 : v == "21:9 (3440x1440)" ? 3 : v == "32:9" ? 4 : v == "16:10" ? 5 : v == "off" ? 6 : 0;
+		}
+		if(readVariable(MesenMwPixels, var)) _mwSquare = string(var.value) != "tv";
+		if(readVariable(MesenMwFill, var)) { string v = var.value; _mwFill = v == "black" ? 0 : v == "full" ? 2 : 1; }
+		if(readVariable(MesenMwEnemies, var)) _mwEnemies = string(var.value) != "disabled";
+		mw_apply();
+	}
+
+	static bool mw_active_width(uint32_t& width, float& aspect)
+	{
+		if(!_console || _console->GetConsoleType() != ConsoleType::Nes || !MegaWide::IsGameSupported()) return false;
+		int w = MegaWide::GetWidth();
+		if(w <= 256) return false;
+		width = (uint32_t)w;
+		aspect = (float)w * (_mwSquare ? 1.0f : 8.0f / 7.0f) / 240.0f;
+		return true;
+	}
+
+	// called once per frame: follow the display in Auto mode and tell the frontend when the width changes
+	static void mw_frame_tick()
+	{
+		if(_mwAspectMode == 0) {
+			static int pollCount = 0, cand = 0, candCount = 0;
+			if(++pollCount >= 30) {
+				pollCount = 0;
+				int a = mw_screen_aspect(true);
+				if(a && a != _mwAutoAspect) {
+					if(a == cand) candCount++; else { cand = a; candCount = 1; }
+					if(candCount >= 2) { _mwAutoAspect = a; candCount = 0; mw_apply(); }
+				} else {
+					candCount = 0;
+				}
+			}
+		}
+		uint32_t w = 0; float ar = 0;
+		if(!mw_active_width(w, ar)) { w = 0; ar = 0; }
+		if(w != _mwLastWidth || ar != _mwLastAspect) {
+			_mwLastWidth = w; _mwLastAspect = ar;
+			retro_system_av_info avInfo = {};
+			retro_get_system_av_info(&avInfo);
+			_lastReportedWidth = avInfo.geometry.base_width;
+			_lastReportedHeight = avInfo.geometry.base_height;
+			env_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, &avInfo);
+		}
+	}
+
 	void update_settings()
 	{
+		mw_read_options();
 		struct retro_variable var = { };
 		NesConfig nesCfg = _emu->GetSettings()->GetNesConfig();
 		SnesConfig snesCfg = _emu->GetSettings()->GetSnesConfig();
@@ -1888,6 +2018,18 @@ void libretro_probe_inputs(const char* tag)
 				FrameInfo outInfo = filter->SendFrame((uint16_t*)frame.FrameBuffer, _emu->GetFrameCount(), _emu->GetFrameCount() & 0x01, nullptr, false);
 
 				uint32_t* src = filter->GetOutputBuffer();
+				// Mega Man 1 widescreen: add the side areas around the finished 4:3 picture
+				if(src && consoleIf->GetConsoleType() == ConsoleType::Nes && MegaWide::IsGameSupported() && MegaWide::GetWidth() > 256) {
+					static std::vector<uint32_t> mwFrame;
+					uint32_t mwPalette[512];
+					NesConfig mwCfg = _emu->GetSettings()->GetNesConfig();
+					NesDefaultVideoFilter::GetFullPalette(mwPalette, mwCfg, PpuModel::Ppu2C02);
+					uint32_t mwWidth = 0;
+					if(MegaWide::Compose(src, outInfo.Width, outInfo.Height, mwPalette, mwFrame, mwWidth)) {
+						src = mwFrame.data();
+						outInfo.Width = mwWidth;
+					}
+				}
 				// Ensure we have valid output before displaying
 				if(src) {
 					size_t pixels = (size_t)outInfo.Width * (size_t)outInfo.Height;
@@ -1934,6 +2076,8 @@ void libretro_probe_inputs(const char* tag)
 				}
 			}
 		}
+
+		mw_frame_tick();
 
 		if(updated) {
 			// Only update geometry if something changed or if flag is set
@@ -3138,7 +3282,7 @@ void libretro_probe_inputs(const char* tag)
 		info->geometry.base_width = width;
 		info->geometry.base_height = height;
 		// TODO/FIXME: set these to something bigger when HD packs are implemented
-		info->geometry.max_width = 512;//256 * 8 * 4; // generous max (8x scale + 4x HD)
+		info->geometry.max_width = 768;//256 * 8 * 4; // generous max (8x scale + 4x HD); 768 = widest Mega Man widescreen frame
 		info->geometry.max_height = 480;//240 * 8 * 4;
 		float system_ar;
 		if(_console) {
@@ -3152,6 +3296,13 @@ void libretro_probe_inputs(const char* tag)
 				case ConsoleType::Sms: system_ar = 4.0f / 3.0f; break;
 				case ConsoleType::Ws: system_ar = 14.0f / 9.0f; break;
 				default: system_ar = 4.0f / 3.0f; break;
+			}
+		}
+		{
+			uint32_t mwWidth = 0; float mwAspect = 0;
+			if(width == 256 && height == 240 && mw_active_width(mwWidth, mwAspect)) {
+				info->geometry.base_width = mwWidth;
+				system_ar = mwAspect;
 			}
 		}
 		info->geometry.aspect_ratio = system_ar;
