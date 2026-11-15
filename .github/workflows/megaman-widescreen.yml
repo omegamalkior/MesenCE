@@ -1,4 +1,4 @@
-name: Build libretro core (Windows, Mega Man widescreen)
+name: Build libretro core (Windows + iOS, Mega Man widescreen)
 
 on:
   push:
@@ -51,3 +51,34 @@ jobs:
           git add mesen2_libretro.dll
           git commit -q -m "Windows libretro core built from ${GITHUB_SHA}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" megaman-widescreen-build
+
+  ios-libretro:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Build mesen2_libretro_ios.dylib (iOS arm64)
+        run: |
+          xcodebuild -version
+          make -f Makefile.libretro -j4 platform=ios-arm64 HAVE_LTO=0
+          ls -la mesen2_libretro_ios.dylib
+          file mesen2_libretro_ios.dylib
+          otool -L mesen2_libretro_ios.dylib
+          otool -l mesen2_libretro_ios.dylib | grep -A4 -E "LC_BUILD_VERSION|LC_VERSION_MIN" | head -12
+
+      - name: Upload core
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesen_libretro_ios-megaman-widescreen
+          path: mesen2_libretro_ios.dylib
+
+      - name: Publish core to the megaman-widescreen-build-ios branch
+        run: |
+          mkdir published && cp mesen2_libretro_ios.dylib published/mesen_libretro_ios.dylib && cd published
+          git init -q -b megaman-widescreen-build-ios
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mesen_libretro_ios.dylib
+          git commit -q -m "iOS arm64 libretro core built from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" megaman-widescreen-build-ios
